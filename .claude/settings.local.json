@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:dexscreener.com)",
+      "WebFetch(domain:docs.dexscreener.com)",
+      "WebFetch(domain:blog.neurotech.africa)",
+      "WebFetch(domain:core.telegram.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)",
+      "Bash(sqlite3:*)"
+    ]
+  }
+}

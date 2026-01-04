@@ -1,0 +1,8 @@
+# Telegram bot library - handles all Telegram API communication
+python-telegram-bot>=20.0
+
+# HTTP requests - for calling DEX Screener API
+requests>=2.28.0
+
+# Load environment variables from .env file
+python-dotenv>=1.0.0
