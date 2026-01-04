@@ -45,26 +45,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         return
 
-    # Parse the message
-    result = parse_message(text)
+    # Send a loading indicator immediately so user knows bot is working
+    # LEARNING MOMENT: User Experience
+    # API calls can take 1-3 seconds. Without feedback, users think the bot is broken.
+    # We send a "processing" message first, then edit it with the result.
+    loading_msg = await update.message.reply_text("⏳ Processing...")
 
-    if not result.success:
-        # Parsing failed - reply with error
-        await update.message.reply_text(
-            f"Couldn't parse that message:\n{result.error_message}\n\n"
-            "Please include a contract address or DEX Screener link."
-        )
-        return
+    try:
+        # Parse the message
+        result = parse_message(text)
 
-    # Process each trade in the message
-    responses = []
-    for parsed_trade in result.trades:
-        trade_result = process_trade(parsed_trade)
-        responses.append(format_trade_result(trade_result))
+        if not result.success:
+            # Parsing failed - edit loading message with error
+            await loading_msg.edit_text(
+                f"❌ Couldn't parse that message:\n{result.error_message}\n\n"
+                "Please include a contract address or DEX Screener link."
+            )
+            return
 
-    # Send reply
-    reply = "\n\n".join(responses)
-    await update.message.reply_text(reply)
+        # Process each trade in the message
+        responses = []
+        for parsed_trade in result.trades:
+            trade_result = process_trade(parsed_trade)
+            responses.append(format_trade_result(trade_result))
+
+        # Edit loading message with the result
+        reply = "\n\n".join(responses)
+        await loading_msg.edit_text(reply)
+
+    except Exception as e:
+        # If anything goes wrong, show error instead of leaving "Processing..."
+        await loading_msg.edit_text(f"❌ Error: {str(e)}")
 
 
 async def handle_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -78,46 +89,52 @@ async def handle_positions_command(update: Update, context: ContextTypes.DEFAULT
 
     Shows positions that haven't been explicitly closed by a sell trade.
     """
-    positions = models.get_all_open_positions()
+    loading_msg = await update.message.reply_text("⏳ Loading positions...")
 
-    if not positions:
-        await update.message.reply_text("No open positions.")
-        return
+    try:
+        positions = models.get_all_open_positions()
 
-    lines = ["📊 Open Positions", "─" * 25]
+        if not positions:
+            await loading_msg.edit_text("No open positions.")
+            return
 
-    total_invested = 0
-    for pos in positions:
-        symbol = pos.get('symbol', 'UNKNOWN')
-        chain = pos.get('chain', '?')
-        remaining = pos.get('remaining_tokens', 0) or 0
-        cost = pos.get('total_cost_usd', 0) or 0
-        status = pos.get('status', 'OPEN')
+        lines = ["📊 Open Positions", "─" * 25]
 
-        total_invested += cost
+        total_invested = 0
+        for pos in positions:
+            symbol = pos.get('symbol', 'UNKNOWN')
+            chain = pos.get('chain', '?')
+            remaining = pos.get('remaining_tokens', 0) or 0
+            cost = pos.get('total_cost_usd', 0) or 0
+            status = pos.get('status', 'OPEN')
 
-        # Format the position line
-        if remaining >= 1_000_000:
-            remaining_str = f"{remaining/1_000_000:.1f}M"
-        elif remaining >= 1_000:
-            remaining_str = f"{remaining/1_000:.1f}K"
-        else:
-            remaining_str = f"{remaining:,.0f}"
+            total_invested += cost
 
-        lines.append(f"• {symbol} ({chain})")
-        lines.append(f"  {remaining_str} tokens | ${cost:,.0f} invested")
+            # Format the position line
+            if remaining >= 1_000_000:
+                remaining_str = f"{remaining/1_000_000:.1f}M"
+            elif remaining >= 1_000:
+                remaining_str = f"{remaining/1_000:.1f}K"
+            else:
+                remaining_str = f"{remaining:,.0f}"
 
-    lines.append("─" * 25)
-    lines.append(f"Total invested: ${total_invested:,.0f}")
+            lines.append(f"• {symbol} ({chain})")
+            lines.append(f"  {remaining_str} tokens | ${cost:,.0f} invested")
 
-    # Add realized PnL
-    stats = models.get_trading_stats()
-    if stats['realized_pnl_usd'] != 0:
-        pnl = stats['realized_pnl_usd']
-        pnl_emoji = "📈" if pnl > 0 else "📉"
-        lines.append(f"{pnl_emoji} Realized PnL: ${pnl:,.2f}")
+        lines.append("─" * 25)
+        lines.append(f"Total invested: ${total_invested:,.0f}")
 
-    await update.message.reply_text("\n".join(lines))
+        # Add realized PnL
+        stats = models.get_trading_stats()
+        if stats['realized_pnl_usd'] != 0:
+            pnl = stats['realized_pnl_usd']
+            pnl_emoji = "📈" if pnl > 0 else "📉"
+            lines.append(f"{pnl_emoji} Realized PnL: ${pnl:,.2f}")
+
+        await loading_msg.edit_text("\n".join(lines))
+
+    except Exception as e:
+        await loading_msg.edit_text(f"❌ Error: {str(e)}")
 
 
 async def handle_log_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -126,89 +143,101 @@ async def handle_log_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     Shows the trade journal history, most recent first.
     """
-    trades = models.get_all_trades(limit=20)  # Last 20 trades
+    loading_msg = await update.message.reply_text("⏳ Loading trade log...")
 
-    if not trades:
-        await update.message.reply_text("No trades recorded yet.")
-        return
+    try:
+        trades = models.get_all_trades(limit=20)  # Last 20 trades
 
-    lines = ["📒 Trade Log (last 20)", "─" * 30]
+        if not trades:
+            await loading_msg.edit_text("No trades recorded yet.")
+            return
 
-    for trade in trades:
-        symbol = trade.get('symbol', '???')
-        trade_type = trade.get('trade_type', '?')
-        chain = trade.get('chain', '?')
-        amount = trade.get('amount_spent') or trade.get('total_value_usd') or 0
-        currency = trade.get('spend_currency', 'USD')
-        timestamp = trade.get('trade_timestamp', '')
-        position_status = trade.get('position_status', '')
+        lines = ["📒 Trade Log (last 20)", "─" * 30]
 
-        # Format timestamp (just date)
-        if timestamp:
-            date_str = str(timestamp)[:10]  # YYYY-MM-DD
-        else:
-            date_str = "?"
+        for trade in trades:
+            symbol = trade.get('symbol', '???')
+            trade_type = trade.get('trade_type', '?')
+            chain = trade.get('chain', '?')
+            amount = trade.get('amount_spent') or trade.get('total_value_usd') or 0
+            currency = trade.get('spend_currency', 'USD')
+            timestamp = trade.get('trade_timestamp', '')
+            position_status = trade.get('position_status', '')
 
-        # Trade type emoji
-        type_emoji = "🟢" if trade_type == 'BUY' else "🔴"
+            # Format timestamp (just date)
+            if timestamp:
+                date_str = str(timestamp)[:10]  # YYYY-MM-DD
+            else:
+                date_str = "?"
 
-        # Position status indicator
-        status_indicator = ""
-        if position_status == 'CLOSED':
-            status_indicator = " ✓"
-        elif position_status == 'PARTIAL':
-            status_indicator = " ◐"
+            # Trade type emoji
+            type_emoji = "🟢" if trade_type == 'BUY' else "🔴"
 
-        # Format amount
-        if amount >= 1000:
-            amount_str = f"${amount/1000:.1f}K"
-        else:
-            amount_str = f"${amount:.0f}"
+            # Position status indicator
+            status_indicator = ""
+            if position_status == 'CLOSED':
+                status_indicator = " ✓"
+            elif position_status == 'PARTIAL':
+                status_indicator = " ◐"
 
-        lines.append(f"{type_emoji} {date_str} | {symbol} ({chain}) | {amount_str}{status_indicator}")
+            # Format amount
+            if amount >= 1000:
+                amount_str = f"${amount/1000:.1f}K"
+            else:
+                amount_str = f"${amount:.0f}"
 
-    lines.append("─" * 30)
-    lines.append("✓ = closed | ◐ = partial")
+            lines.append(f"{type_emoji} {date_str} | {symbol} ({chain}) | {amount_str}{status_indicator}")
 
-    await update.message.reply_text("\n".join(lines))
+        lines.append("─" * 30)
+        lines.append("✓ = closed | ◐ = partial")
+
+        await loading_msg.edit_text("\n".join(lines))
+
+    except Exception as e:
+        await loading_msg.edit_text(f"❌ Error: {str(e)}")
 
 
 async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle /status command - show bot health status.
     """
-    from datetime import datetime
-    from config import ANTHROPIC_API_KEY, ENVIRONMENT
+    loading_msg = await update.message.reply_text("⏳ Checking status...")
 
-    lines = ["🤖 Bot Status", "─" * 20]
-
-    # Environment (local vs DigitalOcean)
-    if ENVIRONMENT == "digitalocean":
-        lines.append("🌐 Running on: DigitalOcean")
-    else:
-        lines.append("💻 Running on: Local")
-
-    # Bot is running (obviously, if this responds)
-    lines.append("✅ Bot: Online")
-
-    # Check database
     try:
-        stats = models.get_trading_stats()
-        lines.append(f"✅ Database: OK ({stats['total_trades']} trades)")
+        from datetime import datetime
+        from config import ANTHROPIC_API_KEY, ENVIRONMENT
+
+        lines = ["🤖 Bot Status", "─" * 20]
+
+        # Environment (local vs DigitalOcean)
+        if ENVIRONMENT == "digitalocean":
+            lines.append("🌐 Running on: DigitalOcean")
+        else:
+            lines.append("💻 Running on: Local")
+
+        # Bot is running (obviously, if this responds)
+        lines.append("✅ Bot: Online")
+
+        # Check database
+        try:
+            stats = models.get_trading_stats()
+            lines.append(f"✅ Database: OK ({stats['total_trades']} trades)")
+        except Exception as e:
+            lines.append(f"❌ Database: Error - {e}")
+
+        # Check Claude API
+        if ANTHROPIC_API_KEY:
+            lines.append("✅ Claude API: Configured")
+        else:
+            lines.append("⚠️ Claude API: Not configured")
+
+        # Current time
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"🕐 Time: {now}")
+
+        await loading_msg.edit_text("\n".join(lines))
+
     except Exception as e:
-        lines.append(f"❌ Database: Error - {e}")
-
-    # Check Claude API
-    if ANTHROPIC_API_KEY:
-        lines.append("✅ Claude API: Configured")
-    else:
-        lines.append("⚠️ Claude API: Not configured")
-
-    # Current time
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lines.append(f"🕐 Time: {now}")
-
-    await update.message.reply_text("\n".join(lines))
+        await loading_msg.edit_text(f"❌ Error: {str(e)}")
 
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
