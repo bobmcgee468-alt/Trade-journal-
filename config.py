@@ -61,6 +61,6 @@ DEXSCREENER_API_BASE = "https://api.dexscreener.com"
 # Optional - if not set, falls back to regex parsing
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-# Environment indicator (set to "digitalocean" on the server)
+# Environment indicator (set to "railway" on Railway, "digitalocean" on DO)
 # Used by /status command to show where the bot is running
 ENVIRONMENT = os.getenv("ENVIRONMENT", "local")

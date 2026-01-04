@@ -10,7 +10,14 @@
       "Bash(python3:*)",
       "Bash(pip3 install:*)",
       "Bash(sqlite3:*)",
-      "WebFetch(domain:docs.railway.com)"
+      "WebFetch(domain:docs.railway.com)",
+      "mcp__Railway__list-projects",
+      "mcp__Railway__create-project-and-link",
+      "mcp__Railway__list-deployments",
+      "mcp__Railway__list-services",
+      "mcp__Railway__link-service",
+      "mcp__Railway__list-variables",
+      "mcp__Railway__set-variables"
     ]
   }
 }

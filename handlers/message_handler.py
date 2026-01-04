@@ -208,8 +208,10 @@ async def handle_status_command(update: Update, context: ContextTypes.DEFAULT_TY
 
         lines = ["🤖 Bot Status", "─" * 20]
 
-        # Environment (local vs DigitalOcean)
-        if ENVIRONMENT == "digitalocean":
+        # Environment (local vs production)
+        if ENVIRONMENT == "railway":
+            lines.append("🚂 Running on: Railway")
+        elif ENVIRONMENT == "digitalocean":
             lines.append("🌐 Running on: DigitalOcean")
         else:
             lines.append("💻 Running on: Local")
