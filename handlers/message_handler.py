@@ -27,6 +27,7 @@ from services.position_tracker import (
     find_position_for_exit,
     get_portfolio_summary
 )
+from services.dex_screener import get_token_info, DexScreenerError
 from database import models
 
 
@@ -85,11 +86,18 @@ async def handle_balance_command(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle /positions command - show all open positions.
+    Handle /positions command - show all open positions with live prices.
 
-    Shows positions that haven't been explicitly closed by a sell trade.
+    LEARNING MOMENT: Unrealized vs Realized PnL
+    - Realized PnL: Profit/loss from trades you've closed (money in your pocket)
+    - Unrealized PnL: Paper profit/loss on positions you still hold
+
+    To calculate unrealized PnL:
+    1. Fetch the current market price for each token
+    2. Calculate: current_value = tokens_held * current_price
+    3. Calculate: unrealized_pnl = current_value - what_you_paid
     """
-    loading_msg = await update.message.reply_text("⏳ Loading positions...")
+    loading_msg = await update.message.reply_text("⏳ Loading positions and fetching live prices...")
 
     try:
         positions = models.get_all_open_positions()
@@ -100,17 +108,22 @@ async def handle_positions_command(update: Update, context: ContextTypes.DEFAULT
 
         lines = ["📊 Open Positions", "─" * 25]
 
+        # Totals for spot tokens (where we can fetch prices)
         total_invested = 0
+        total_current_value = 0
+        total_unrealized_pnl = 0
+        spot_positions_count = 0
+
         for pos in positions:
             symbol = pos.get('symbol', 'UNKNOWN')
             chain = pos.get('chain', '?')
+            contract_address = pos.get('contract_address', '')
             remaining = pos.get('remaining_tokens', 0) or 0
             cost = pos.get('total_cost_usd', 0) or 0
-            status = pos.get('status', 'OPEN')
 
             total_invested += cost
 
-            # Format the position line
+            # Format tokens held
             if remaining >= 1_000_000:
                 remaining_str = f"{remaining/1_000_000:.1f}M"
             elif remaining >= 1_000:
@@ -121,8 +134,53 @@ async def handle_positions_command(update: Update, context: ContextTypes.DEFAULT
             lines.append(f"• {symbol} ({chain})")
             lines.append(f"  {remaining_str} tokens | ${cost:,.0f} invested")
 
+            # Check if this is a perp/CEX position (synthetic address)
+            # LEARNING MOMENT: Identifying Perps vs Spot
+            # Perps use synthetic addresses like "BTC_hyperliquid" or "ETH_binance"
+            # Real on-chain tokens have hex addresses starting with 0x (or base58 for Solana)
+            is_perp = '_' in contract_address and not contract_address.startswith('0x')
+
+            if is_perp:
+                lines.append("  ⚠️ Price unavailable (perp)")
+            else:
+                # Fetch live price from DEX Screener
+                try:
+                    token_info = get_token_info(contract_address, chain)
+
+                    if token_info and token_info.price_usd:
+                        current_value = remaining * token_info.price_usd
+                        unrealized_pnl = current_value - cost
+
+                        # Track totals for spot tokens
+                        total_current_value += current_value
+                        total_unrealized_pnl += unrealized_pnl
+                        spot_positions_count += 1
+
+                        # Format PnL with sign and percentage
+                        if cost > 0:
+                            pnl_pct = (unrealized_pnl / cost) * 100
+                            pnl_sign = "+" if unrealized_pnl >= 0 else ""
+                            pnl_emoji = "💰" if unrealized_pnl >= 0 else "📉"
+                            lines.append(f"  {pnl_emoji} Now: ${current_value:,.0f} | {pnl_sign}${unrealized_pnl:,.0f} ({pnl_sign}{pnl_pct:.1f}%)")
+                        else:
+                            lines.append(f"  💰 Now: ${current_value:,.0f}")
+                    else:
+                        lines.append("  ⚠️ Price unavailable")
+
+                except DexScreenerError:
+                    lines.append("  ⚠️ Price fetch failed")
+
         lines.append("─" * 25)
         lines.append(f"Total invested: ${total_invested:,.0f}")
+
+        # Show unrealized PnL summary for spot positions
+        if spot_positions_count > 0:
+            total_pnl_sign = "+" if total_unrealized_pnl >= 0 else ""
+            if total_invested > 0:
+                total_pnl_pct = (total_unrealized_pnl / total_invested) * 100
+                pnl_emoji = "💰" if total_unrealized_pnl >= 0 else "📉"
+                lines.append(f"{pnl_emoji} Current value: ${total_current_value:,.0f} (spot)")
+                lines.append(f"📊 Unrealized PnL: {total_pnl_sign}${total_unrealized_pnl:,.0f} ({total_pnl_sign}{total_pnl_pct:.1f}%)")
 
         # Add realized PnL
         stats = models.get_trading_stats()
